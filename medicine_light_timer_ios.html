@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<!-- iOS PWA & viewport -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Med Timer">
+<meta name="theme-color" content="#0d0d14">
+<meta name="mobile-web-app-capable" content="yes">
+<!-- iOS splash / icon hints -->
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'><rect fill='%230d0d14' width='180' height='180' rx='40'/><text y='110' x='90' text-anchor='middle' font-size='90'>💊</text></svg>">
+<title>Medicine Time Light — 3D</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Nunito:wght@700;900&display=swap');
+
+  :root {
+    --safe-top:    env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left:   env(safe-area-inset-left, 0px);
+    --safe-right:  env(safe-area-inset-right, 0px);
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+
+  html, body {
+    background:#0d0d14;
+    font-family:'Space Mono',monospace;
+    color:#f0ece0;
+    overflow:hidden;
+    height:100%;
+    width:100%;
+    /* Prevent iOS overscroll bounce */
+    position:fixed;
+    -webkit-overflow-scrolling:touch;
+    touch-action:none;
+  }
+
+  canvas { display:block; touch-action:none; }
+
+  /* ── HUD ── */
+  #hud {
+    position:fixed; top:0; left:0; right:0;
+    display:flex; justify-content:space-between; align-items:center;
+    /* Safe area for notch/Dynamic Island */
+    padding-top: calc(var(--safe-top) + 10px);
+    padding-left: calc(var(--safe-left) + 18px);
+    padding-right: calc(var(--safe-right) + 18px);
+    padding-bottom: 10px;
+    background:linear-gradient(to bottom,rgba(13,13,20,0.97) 80%,transparent);
+    z-index:10;
+    min-height: calc(var(--safe-top) + 52px);
+  }
+  #hud h1 {
+    font-family:'Nunito',sans-serif;
+    font-size: clamp(0.7rem, 3.5vw, 1rem);
+    font-weight:900; letter-spacing:.1em; text-transform:uppercase; color:#f9e07a;
+  }
+  #clock {
+    font-size: clamp(0.9rem, 4vw, 1.2rem);
+    font-weight:700; color:#7ee8a2; letter-spacing:.08em;
+  }
+
+  /* ── CONTROLS ── */
+  #controls {
+    position:fixed; bottom:0; left:0; right:0;
+    padding-left: calc(var(--safe-left) + 12px);
+    padding-right: calc(var(--safe-right) + 12px);
+    padding-bottom: calc(var(--safe-bottom) + 10px);
+    padding-top: 10px;
+    background:linear-gradient(to top,rgba(13,13,20,0.98) 85%,transparent);
+    display:flex; flex-direction:column; align-items:center; gap:8px;
+    z-index:10;
+  }
+
+  .schedules {
+    display:flex; gap:8px; flex-wrap:nowrap;
+    justify-content:center; width:100%;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    scroll-snap-type:x mandatory;
+    padding-bottom:2px;
+  }
+  /* hide scrollbar on iOS */
+  .schedules::-webkit-scrollbar { display:none; }
+
+  .sched-card {
+    background:#15151f; border:1.5px solid #2a2a3a; border-radius:12px;
+    padding:10px 12px; display:flex; flex-direction:column; gap:6px;
+    min-width: clamp(120px, 28vw, 150px);
+    flex-shrink:0;
+    scroll-snap-align:center;
+    transition:border-color .2s;
+    /* larger touch area */
+    -webkit-user-select:none; user-select:none;
+  }
+  .sched-card.active-alarm { border-color:#f9e07a; box-shadow:0 0 12px #f9e07a44; }
+
+  .sched-header {
+    display:flex; justify-content:space-between; align-items:center;
+    font-size: clamp(0.5rem, 2.2vw, 0.6rem);
+    letter-spacing:.12em; text-transform:uppercase;
+  }
+  .sched-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+
+  .sched-time-row { display:flex; align-items:center; gap:4px; }
+
+  /* iOS-friendly number inputs */
+  .sched-time-row input[type="number"] {
+    width: clamp(38px, 10vw, 46px);
+    background:#1a1a2a; border:1.5px solid #333; color:#f0ece0;
+    font-family:'Space Mono',monospace;
+    font-size: clamp(0.8rem, 3.5vw, 0.9rem);
+    padding:6px 4px;
+    border-radius:7px; text-align:center; outline:none;
+    transition:border-color .2s;
+    /* prevent iOS zoom on focus (font-size ≥ 16px equivalent handled via scale) */
+    -webkit-appearance:none; appearance:none;
+    /* remove spin buttons */
+  }
+  .sched-time-row input[type="number"]::-webkit-inner-spin-button,
+  .sched-time-row input[type="number"]::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
+  .sched-time-row input[type="number"]:focus { border-color:#f9e07a; }
+
+  .colon { font-size:1rem; color:#555; }
+
+  /* Big enough touch targets (≥44px) */
+  .sched-btn {
+    font-family:'Space Mono',monospace;
+    font-size: clamp(0.52rem, 2vw, 0.62rem);
+    font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+    padding:10px 8px; min-height:44px;
+    border:none; border-radius:8px; cursor:pointer;
+    transition:all .15s; width:100%;
+    -webkit-appearance:none; appearance:none;
+    -webkit-user-select:none; user-select:none;
+    /* active press feedback */
+  }
+  .sched-btn:active { transform:scale(0.96); opacity:0.85; }
+
+  /* ── BOTTOM ROW ── */
+  .ctrl-row {
+    display:flex; gap:10px; flex-wrap:wrap;
+    justify-content:center; align-items:center; width:100%;
+  }
+
+  .label { font-size:.58rem; letter-spacing:.14em; text-transform:uppercase; color:#666; margin-bottom:3px; }
+
+  .color-group { display:flex; flex-direction:column; align-items:center; gap:5px; }
+  .color-swatches { display:flex; gap:10px; }
+
+  .swatch {
+    /* 44×44 minimum touch target */
+    width:36px; height:36px; border-radius:50%;
+    cursor:pointer; border:2px solid transparent;
+    transition:all .15s;
+    -webkit-user-select:none; user-select:none;
+  }
+  .swatch.active { border-color:#fff; transform:scale(1.2); }
+  .swatch:active { transform:scale(0.9); }
+
+  #test-btn, #xray-btn {
+    font-family:'Space Mono',monospace;
+    font-size: clamp(0.58rem, 2.5vw, 0.68rem);
+    font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+    padding:10px 14px; min-height:44px; min-width:44px;
+    border-radius:8px; cursor:pointer; background:transparent;
+    transition:all .15s;
+    -webkit-appearance:none; appearance:none;
+    -webkit-user-select:none; user-select:none;
+  }
+  #test-btn { border:1.5px solid #7ee8a2; color:#7ee8a2; }
+  #test-btn:active { background:#7ee8a225; transform:scale(0.96); }
+  #xray-btn { border:1.5px solid #aa88ff; color:#aa88ff; }
+  #xray-btn:active { background:#aa88ff25; transform:scale(0.96); }
+
+  /* ── STATUS TOAST ── */
+  #status {
+    position:fixed;
+    top: calc(var(--safe-top) + 58px);
+    left:50%; transform:translateX(-50%);
+    padding:7px 20px; border-radius:22px; font-size:.62rem;
+    letter-spacing:.14em; text-transform:uppercase; font-weight:700;
+    opacity:0; transition:opacity .4s; z-index:20; white-space:nowrap;
+    max-width:90vw; overflow:hidden; text-overflow:ellipsis;
+  }
+  #status.show { opacity:1; }
+
+  /* drag hint hidden on small screens, shown on larger */
+  #drag-hint {
+    position:fixed; top:50%; right:18px; transform:translateY(-50%);
+    font-size:.5rem; color:#2a2a3a; letter-spacing:.1em;
+    text-transform:uppercase; writing-mode:vertical-rl;
+    pointer-events:none;
+  }
+  @media (max-width:430px) { #drag-hint { display:none; } }
+
+  /* hint text at very bottom */
+  .hint-text {
+    font-size:.48rem; color:#2a2a3a; letter-spacing:.1em;
+    -webkit-user-select:none; user-select:none;
+  }
+
+  /* Pinch zoom hint overlay */
+  #pinch-hint {
+    position:fixed; bottom: calc(var(--safe-bottom) + 130px); left:50%;
+    transform:translateX(-50%);
+    font-size:.5rem; color:#333; letter-spacing:.12em; text-transform:uppercase;
+    pointer-events:none; opacity:1; transition:opacity 1s;
+    white-space:nowrap;
+  }
+  #pinch-hint.gone { opacity:0; }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <h1>💊 Med Timer</h1>
+  <div id="clock">--:--:--</div>
+</div>
+
+<div id="status"></div>
+<div id="drag-hint">drag · pinch</div>
+<div id="pinch-hint">pinch to zoom · drag to rotate</div>
+<div id="canvas-container" style="width:100%;height:100%;position:absolute;top:0;left:0;"></div>
+
+<div id="controls">
+  <div class="schedules">
+    <div class="sched-card" id="sched-0">
+      <div class="sched-header">
+        <span style="color:#ff7a7a;">🌅 Morning</span>
+        <div class="sched-dot" style="background:#ff5566;"></div>
+      </div>
+      <div class="sched-time-row">
+        <input type="number" class="s-hour" min="0" max="23" value="7" inputmode="numeric" pattern="[0-9]*">
+        <span class="colon">:</span>
+        <input type="number" class="s-min"  min="0" max="59" value="0" inputmode="numeric" pattern="[0-9]*">
+      </div>
+      <button class="sched-btn" data-idx="0" style="background:#ff5566;color:#fff;">Set Morning</button>
+    </div>
+    <div class="sched-card" id="sched-1">
+      <div class="sched-header">
+        <span style="color:#7ee8a2;">☀️ Afternoon</span>
+        <div class="sched-dot" style="background:#4cde88;"></div>
+      </div>
+      <div class="sched-time-row">
+        <input type="number" class="s-hour" min="0" max="23" value="13" inputmode="numeric" pattern="[0-9]*">
+        <span class="colon">:</span>
+        <input type="number" class="s-min"  min="0" max="59" value="0" inputmode="numeric" pattern="[0-9]*">
+      </div>
+      <button class="sched-btn" data-idx="1" style="background:#4cde88;color:#0d0d14;">Set Afternoon</button>
+    </div>
+    <div class="sched-card" id="sched-2">
+      <div class="sched-header">
+        <span style="color:#bb99ff;">🌙 Evening</span>
+        <div class="sched-dot" style="background:#9955ff;"></div>
+      </div>
+      <div class="sched-time-row">
+        <input type="number" class="s-hour" min="0" max="23" value="20" inputmode="numeric" pattern="[0-9]*">
+        <span class="colon">:</span>
+        <input type="number" class="s-min"  min="0" max="59" value="0" inputmode="numeric" pattern="[0-9]*">
+      </div>
+      <button class="sched-btn" data-idx="2" style="background:#9955ff;color:#fff;">Set Evening</button>
+    </div>
+  </div>
+
+  <div class="ctrl-row">
+    <div class="color-group">
+      <div class="label">Light Color</div>
+      <div class="color-swatches">
+        <div class="swatch active" data-color="warm"   style="background:radial-gradient(#ffe8a0,#f9c846);"></div>
+        <div class="swatch"        data-color="green"  style="background:radial-gradient(#a8f0c0,#4cde88);"></div>
+        <div class="swatch"        data-color="blue"   style="background:radial-gradient(#a0d0ff,#4a9fff);"></div>
+        <div class="swatch"        data-color="red"    style="background:radial-gradient(#ffb0a0,#ff5566);"></div>
+        <div class="swatch"        data-color="purple" style="background:radial-gradient(#d0a0ff,#9955ff);"></div>
+      </div>
+    </div>
+    <button id="xray-btn">🔍 X-Ray</button>
+    <button id="test-btn">⚡ Test</button>
+  </div>
+  <div class="hint-text">DRAG TO ROTATE &nbsp;|&nbsp; PINCH TO ZOOM</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ── helpers ────────────────────────────────────────────────────────────────────
+function mat(opts) { return new THREE.MeshStandardMaterial(opts); }
+function mesh(geo, material) { return new THREE.Mesh(geo, material); }
+function box(w,h,d)  { return new THREE.BoxGeometry(w,h,d); }
+function cyl(rt,rb,h,s){ return new THREE.CylinderGeometry(rt,rb,h,s||12); }
+function sph(r,ws,hs){ return new THREE.SphereGeometry(r,ws||12,hs||8); }
+function plane(w,h)  { return new THREE.PlaneGeometry(w,h); }
+function tube(pts, color) {
+  const curve = new THREE.CatmullRomCurve3(pts.map(p => new THREE.Vector3(p[0],p[1],p[2])));
+  return mesh(new THREE.TubeGeometry(curve, 20, 0.008, 6, false), mat({ color, roughness:0.7 }));
+}
+
+// ── renderer ──────────────────────────────────────────────────────────────────
+const container = document.getElementById('canvas-container');
+const renderer  = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+// Cap pixel ratio at 2 for performance on Retina/ProMotion displays
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
+container.appendChild(renderer.domElement);
+
+const scene  = new THREE.Scene();
+scene.fog    = new THREE.FogExp2(0x0d0d14, 0.055);
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 100);
+camera.position.set(0, 0.4, 5.2);
+
+// ── lights ────────────────────────────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0x1a1a2a, 1.3));
+const sun = new THREE.DirectionalLight(0xffeedd, 1.6);
+sun.position.set(3, 6, 4); sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0x2244aa, 0.4);
+fill.position.set(-4, 2, -3); scene.add(fill);
+const boxLight = new THREE.PointLight(0xffe060, 0, 4);
+scene.add(boxLight);
+
+// ── floor ─────────────────────────────────────────────────────────────────────
+const floorM = mesh(plane(20,20), mat({ color:0x111118, roughness:0.95 }));
+floorM.rotation.x = -Math.PI/2;
+floorM.position.set(0, -1.55, 0);
+floorM.receiveShadow = true;
+scene.add(floorM);
+
+// ── constants ─────────────────────────────────────────────────────────────────
+const BOX = 1.3, half = BOX / 2;
+const COLORS = {
+  warm:  { light:0xffe060, emissive:0xffaa00, panel:0xfff4c0 },
+  green: { light:0x44ee88, emissive:0x00cc55, panel:0xc0ffd8 },
+  blue:  { light:0x44aaff, emissive:0x0055ff, panel:0xc0ddff },
+  red:   { light:0xff5566, emissive:0xff1133, panel:0xffd0cc },
+  purple:{ light:0xbb66ff, emissive:0x8833ff, panel:0xe0c0ff },
+};
+let currentColor = 'warm';
+let lightOn = false, pulseDir = 1, pulseVal = 0;
+let xrayMode = false;
+
+// ── box group ─────────────────────────────────────────────────────────────────
+const boxGroup = new THREE.Group();
+scene.add(boxGroup);
+
+const shellMat = () => mat({ color:0xd4c9a0, roughness:0.85 });
+const backFace   = mesh(box(BOX, BOX, 0.045), shellMat());
+const leftFace   = mesh(box(0.045,BOX, BOX), shellMat());
+const rightFace  = mesh(box(0.045,BOX, BOX), shellMat());
+const topFace2   = mesh(box(BOX, 0.045, BOX), shellMat());
+const bottomFace = mesh(box(BOX, 0.045, BOX), shellMat());
+
+backFace.position.set(0, 0, -half);   backFace.castShadow   = true;
+leftFace.position.set(-half, 0, 0);   leftFace.castShadow   = true;
+rightFace.position.set(half, 0, 0);   rightFace.castShadow  = true;
+topFace2.position.set(0, half, 0);    topFace2.castShadow   = true;
+bottomFace.position.set(0, -half, 0); bottomFace.castShadow = true;
+
+const panelMat2 = mat({ color:0xfff4c0, roughness:0.3, emissive:0x000000,
+  emissiveIntensity:0, transparent:true, opacity:0.82 });
+const frontPanel = mesh(box(BOX, BOX, 0.04), panelMat2);
+frontPanel.position.set(0, 0, half);
+[backFace,leftFace,rightFace,topFace2,bottomFace,frontPanel].forEach(m => boxGroup.add(m));
+
+// ── button on top ─────────────────────────────────────────────────────────────
+const btnBody = mesh(cyl(0.08,0.09,0.1,20), mat({ color:0x222222, roughness:0.4, metalness:0.3 }));
+btnBody.position.set(0, half+0.07, 0);
+boxGroup.add(btnBody);
+const btnCap = mesh(cyl(0.065,0.065,0.04,20), mat({ color:0xcc2233, roughness:0.3, metalness:0.2 }));
+btnCap.position.set(0, half+0.13, 0);
+boxGroup.add(btnCap);
+
+// ── front label ───────────────────────────────────────────────────────────────
+(function() {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 256;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#1a1a2a'; ctx.textAlign = 'center';
+  ctx.font = 'bold 30px Nunito,sans-serif';
+  ctx.fillText('MEDICINE', 128, 95);
+  ctx.fillText('TIME', 128, 130);
+  ctx.strokeStyle = '#1a1a2a'; ctx.lineWidth = 5;
+  const pw=56, ph=24, pr=12;
+  ctx.save(); ctx.translate(128,175); ctx.rotate(0.5);
+  ctx.beginPath();
+  ctx.moveTo(-pw/2+pr,-ph/2); ctx.lineTo(pw/2-pr,-ph/2);
+  ctx.arc(pw/2-pr,0,pr,-Math.PI/2,Math.PI/2);
+  ctx.lineTo(-pw/2+pr,ph/2); ctx.arc(-pw/2+pr,0,pr,Math.PI/2,-Math.PI/2);
+  ctx.closePath(); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0,-ph/2); ctx.lineTo(0,ph/2); ctx.stroke();
+  ctx.restore();
+  const labelMesh = mesh(plane(BOX*0.88, BOX*0.88),
+    new THREE.MeshBasicMaterial({ map:new THREE.CanvasTexture(c), transparent:true, depthWrite:false }));
+  labelMesh.position.set(0, 0, half+0.022);
+  boxGroup.add(labelMesh);
+})();
+
+// ── glow halo ─────────────────────────────────────────────────────────────────
+const glowMesh = mesh(plane(BOX*1.8, BOX*1.8),
+  new THREE.MeshBasicMaterial({ color:0xffe060, transparent:true, opacity:0,
+    blending:THREE.AdditiveBlending, depthWrite:false }));
+glowMesh.position.set(0, 0, half+0.01);
+boxGroup.add(glowMesh);
+
+// ── interior group ────────────────────────────────────────────────────────────
+const interior = new THREE.Group();
+boxGroup.add(interior);
+
+// battery
+(function(){
+  const g = new THREE.Group();
+  const body = mesh(box(0.18,0.32,0.12), mat({ color:0x111111, roughness:0.5, metalness:0.6 }));
+  g.add(body);
+  const lbl = mesh(box(0.15,0.15,0.005), mat({ color:0xe8c020, roughness:0.6 }));
+  lbl.position.set(0, 0, 0.063); g.add(lbl);
+  const bc = document.createElement('canvas'); bc.width=64; bc.height=64;
+  const bx = bc.getContext('2d');
+  bx.fillStyle='#e8c020'; bx.fillRect(0,0,64,64);
+  bx.fillStyle='#111'; bx.font='bold 22px monospace'; bx.textAlign='center';
+  bx.fillText('9V',32,40);
+  const txt = mesh(plane(0.14,0.14), new THREE.MeshBasicMaterial({ map:new THREE.CanvasTexture(bc), transparent:true }));
+  txt.position.set(0, 0, 0.068); g.add(txt);
+  const tip = mesh(cyl(0.025,0.025,0.04,10), mat({ color:0xaaaaaa, metalness:0.8, roughness:0.2 }));
+  tip.position.set(0, 0.18, 0); g.add(tip);
+  g.position.set(-0.35, -0.28, -0.22); g.rotation.z = 0.1;
+  interior.add(g);
+})();
+
+// timer module
+(function(){
+  const g = new THREE.Group();
+  const base = mesh(box(0.28,0.16,0.1), mat({ color:0x0a2218, roughness:0.4, metalness:0.3 }));
+  g.add(base);
+  const pcb = mesh(box(0.22,0.12,0.01), mat({ color:0x1a5c2a, roughness:0.5 }));
+  pcb.position.set(0, 0, 0.055); g.add(pcb);
+  const scr = mesh(box(0.14,0.07,0.005), mat({ color:0x003311, emissive:0x00aa33, emissiveIntensity:0.5 }));
+  scr.position.set(0, 0.01, 0.063); g.add(scr);
+  for (let i=0;i<3;i++){
+    const cap = mesh(cyl(0.012,0.012,0.025,8), mat({ color:0x334499, roughness:0.4 }));
+    cap.rotation.set(Math.PI/2, 0, 0);
+    cap.position.set(-0.05+i*0.05, -0.03, 0.068);
+    g.add(cap);
+  }
+  g.position.set(0.2, 0.28, -0.28);
+  interior.add(g);
+})();
+
+// LED
+let ledDome;
+(function(){
+  const g = new THREE.Group();
+  const body = mesh(cyl(0.035,0.035,0.06,12), mat({ color:0xdddddd, roughness:0.2, metalness:0.1, transparent:true, opacity:0.85 }));
+  g.add(body);
+  ledDome = mesh(new THREE.SphereGeometry(0.035,12,8,0,Math.PI*2,0,Math.PI/2),
+    mat({ color:0xffeeaa, emissive:0xffcc00, emissiveIntensity:0.3, transparent:true, opacity:0.9 }));
+  ledDome.position.set(0, 0.03, 0); g.add(ledDome);
+  for (let i=0;i<2;i++){
+    const leg = mesh(cyl(0.004,0.004,0.12,6), mat({ color:0xcccccc, metalness:0.8, roughness:0.2 }));
+    leg.position.set(i===0?-0.015:0.015, -0.09, 0); g.add(leg);
+  }
+  g.position.set(0, 0.05, 0.28);
+  g.rotation.set(-Math.PI/2, 0, 0);
+  interior.add(g);
+})();
+
+// resistor
+(function(){
+  const g = new THREE.Group();
+  const body = mesh(cyl(0.018,0.018,0.07,10), mat({ color:0xcc8822, roughness:0.6 }));
+  body.rotation.set(0, 0, Math.PI/2); g.add(body);
+  [0xffdd00,0x111111,0xcc4400].forEach((col,i)=>{
+    const s = mesh(cyl(0.019,0.019,0.01,10), mat({ color:col }));
+    s.rotation.set(0, 0, Math.PI/2);
+    s.position.set(-0.02+i*0.02, 0, 0); g.add(s);
+  });
+  for (let i=0;i<2;i++){
+    const lead = mesh(cyl(0.004,0.004,0.08,6), mat({ color:0xaaaaaa, metalness:0.8 }));
+    lead.rotation.set(0, 0, Math.PI/2);
+    lead.position.set(i===0?-0.075:0.075, 0, 0); g.add(lead);
+  }
+  g.position.set(-0.1, 0.1, -0.1);
+  interior.add(g);
+})();
+
+interior.add(tube([[-0.35,-0.28,-0.22],[-0.2,0.05,-0.1],[0.1,0.2,-0.2],[0.2,0.28,-0.28]], 0xdd2233));
+interior.add(tube([[-0.35,-0.1,-0.22],[-0.1,-0.05,0.05],[0,0.05,0.25]], 0x111111));
+interior.add(tube([[0.2,0.2,-0.28],[0.1,0.15,0.0],[0.05,0.1,0.25]], 0xddaa00));
+interior.add(tube([[-0.06,0.1,-0.1],[0.0,0.08,0.1],[0.0,0.06,0.25]], 0x22aa44));
+for (let i=0;i<5;i++){
+  const s = mesh(sph(0.008,6,6), mat({ color:0xccccaa, metalness:0.6, roughness:0.4 }));
+  s.position.set(0.12+i*0.04, 0.26, -0.22);
+  interior.add(s);
+}
+
+// ── TOUCH / DRAG / PINCH-TO-ZOOM ──────────────────────────────────────────────
+let isDragging = false, prevMouse = {x:0,y:0};
+let rotTarget  = {x:0.2, y:0.45};
+let rotCurrent = {x:0.2, y:0.45};
+let zTarget = 5.2;
+let pinchStartDist = null;
+let pinchStartZ = null;
+
+function getTouchDist(touches) {
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.sqrt(dx*dx + dy*dy);
+}
+
+// Mouse support (desktop)
+renderer.domElement.addEventListener('mousedown', e => {
+  isDragging=true; prevMouse={x:e.clientX,y:e.clientY};
+});
+window.addEventListener('mouseup', () => isDragging=false);
+window.addEventListener('mousemove', e => {
+  if (!isDragging) return;
+  rotTarget.y += (e.clientX-prevMouse.x)*0.008;
+  rotTarget.x += (e.clientY-prevMouse.y)*0.006;
+  rotTarget.x = Math.max(-0.65, Math.min(0.75, rotTarget.x));
+  prevMouse = {x:e.clientX,y:e.clientY};
+});
+renderer.domElement.addEventListener('wheel', e => {
+  e.preventDefault();
+  zTarget = Math.max(2.2, Math.min(9, zTarget + e.deltaY*0.005));
+},{passive:false});
+
+// Touch support (iOS)
+renderer.domElement.addEventListener('touchstart', e => {
+  if (e.touches.length === 1) {
+    isDragging = true;
+    prevMouse = {x:e.touches[0].clientX, y:e.touches[0].clientY};
+    pinchStartDist = null;
+  } else if (e.touches.length === 2) {
+    isDragging = false;
+    pinchStartDist = getTouchDist(e.touches);
+    pinchStartZ = zTarget;
+    // hide hint permanently after first pinch
+    document.getElementById('pinch-hint').classList.add('gone');
+  }
+},{passive:true});
+
+window.addEventListener('touchend', e => {
+  if (e.touches.length < 2) pinchStartDist = null;
+  if (e.touches.length === 0) isDragging = false;
+});
+
+window.addEventListener('touchmove', e => {
+  // Prevent iOS Safari page scroll/rubber-band while interacting with canvas
+  if (e.target === renderer.domElement) e.preventDefault();
+
+  if (e.touches.length === 1 && isDragging) {
+    rotTarget.y += (e.touches[0].clientX - prevMouse.x)*0.008;
+    rotTarget.x += (e.touches[0].clientY - prevMouse.y)*0.006;
+    rotTarget.x = Math.max(-0.65, Math.min(0.75, rotTarget.x));
+    prevMouse = {x:e.touches[0].clientX, y:e.touches[0].clientY};
+  } else if (e.touches.length === 2 && pinchStartDist !== null) {
+    const dist = getTouchDist(e.touches);
+    const scale = pinchStartDist / dist;
+    zTarget = Math.max(2.2, Math.min(9, pinchStartZ * scale));
+  }
+},{passive:false});
+
+// ── x-ray ─────────────────────────────────────────────────────────────────────
+function setXray(on) {
+  xrayMode = on;
+  [backFace,leftFace,rightFace,topFace2,bottomFace].forEach(f => {
+    f.material.transparent = true;
+    f.material.opacity = on ? 0.08 : 1.0;
+  });
+  panelMat2.opacity = on ? 0.1 : 0.82;
+  document.getElementById('xray-btn').textContent = on ? '🔲 Solid' : '🔍 X-Ray';
+}
+document.getElementById('xray-btn').addEventListener('click', () => setXray(!xrayMode));
+
+// ── schedules ─────────────────────────────────────────────────────────────────
+const SCHED_COLORS = ['red','green','purple'];
+const SCHED_NAMES  = ['Morning','Afternoon','Evening'];
+const SCHED_HEX    = ['#ff5566','#4cde88','#9955ff'];
+const schedules    = [{hour:7,min:0},{hour:13,min:0},{hour:20,min:0}];
+const lastFired    = [-1,-1,-1];
+
+document.querySelectorAll('.sched-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const idx  = parseInt(btn.dataset.idx);
+    const card = document.getElementById('sched-'+idx);
+    const ins  = card.querySelectorAll('input');
+    schedules[idx].hour = Math.min(23, Math.max(0, parseInt(ins[0].value)||0));
+    schedules[idx].min  = Math.min(59, Math.max(0, parseInt(ins[1].value)||0));
+    lastFired[idx] = -1;
+    const h = String(schedules[idx].hour).padStart(2,'0');
+    const m = String(schedules[idx].min).padStart(2,'0');
+    showStatus(`⏰ ${SCHED_NAMES[idx]} → ${h}:${m}`, SCHED_HEX[idx]);
+    turnLightOff();
+    document.querySelectorAll('.sched-card').forEach(c => c.classList.remove('active-alarm'));
+  });
+});
+
+// ── color ─────────────────────────────────────────────────────────────────────
+function setColor(name) {
+  currentColor = name;
+  const c = COLORS[name];
+  boxLight.color.set(c.light);
+  panelMat2.color.set(c.panel);
+  glowMesh.material.color.set(c.light);
+  document.querySelectorAll('.swatch').forEach(s => s.classList.toggle('active', s.dataset.color===name));
+}
+document.querySelectorAll('.swatch').forEach(s => s.addEventListener('click',()=>setColor(s.dataset.color)));
+
+// ── light on/off ──────────────────────────────────────────────────────────────
+function turnLightOn(colorName) {
+  if (colorName) setColor(colorName);
+  lightOn=true; pulseVal=0;
+}
+function turnLightOff() {
+  lightOn=false;
+  boxLight.intensity=0;
+  panelMat2.emissiveIntensity=0;
+  glowMesh.material.opacity=0;
+  if (ledDome) ledDome.material.emissiveIntensity=0;
+}
+document.getElementById('test-btn').addEventListener('click', () => {
+  if (lightOn) { turnLightOff(); }
+  else { turnLightOn(currentColor); showStatus('💊 Test light on!','#ffe060'); }
+});
+
+// ── status ────────────────────────────────────────────────────────────────────
+function showStatus(msg, color) {
+  const el = document.getElementById('status');
+  el.textContent=msg; el.style.background=color+'22';
+  el.style.color=color; el.style.border=`1px solid ${color}66`;
+  el.classList.add('show');
+  clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('show'),3800);
+}
+
+// ── clock & alarm check ───────────────────────────────────────────────────────
+const clockEl = document.getElementById('clock');
+function updateClock() {
+  const now=new Date(), h=now.getHours(), m=now.getMinutes();
+  clockEl.textContent=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+  schedules.forEach((sc,i)=>{
+    const isMatch = (h===sc.hour && m===sc.min);
+    if (!isMatch && lastFired[i]===m) lastFired[i]=-1;
+    if (isMatch && lastFired[i]!==m) {
+      lastFired[i]=m;
+      turnLightOn(SCHED_COLORS[i]);
+      document.querySelectorAll('.sched-card').forEach((c,ci)=>c.classList.toggle('active-alarm',ci===i));
+      showStatus(`💊 ${SCHED_NAMES[i]} medicine time!`, SCHED_HEX[i]);
+      // iOS haptic feedback via vibration API (Android) — no-op on iOS but harmless
+      if (navigator.vibrate) navigator.vibrate([200,100,200]);
+    }
+  });
+}
+
+// Hide pinch hint after 4 seconds anyway
+setTimeout(() => document.getElementById('pinch-hint').classList.add('gone'), 4000);
+
+// ── animate ───────────────────────────────────────────────────────────────────
+let frame=0;
+function animate() {
+  requestAnimationFrame(animate);
+  frame++;
+
+  // Smooth camera zoom
+  camera.position.z += (zTarget - camera.position.z) * 0.07;
+
+  rotCurrent.x += (rotTarget.x-rotCurrent.x)*0.06;
+  rotCurrent.y += (rotTarget.y-rotCurrent.y)*0.06;
+  boxGroup.rotation.x = rotCurrent.x;
+  boxGroup.rotation.y = rotCurrent.y;
+
+  if (!isDragging && pinchStartDist===null) {
+    boxGroup.position.set(0, Math.sin(frame*0.017)*0.035, 0);
+    rotTarget.y += 0.0013;
+  }
+
+  if (lightOn) {
+    pulseVal += pulseDir*0.02;
+    if (pulseVal>1)  { pulseVal=1;   pulseDir=-1; }
+    if (pulseVal<0.3){ pulseVal=0.3; pulseDir=1;  }
+    const c = COLORS[currentColor];
+    boxLight.intensity = pulseVal*3.8;
+    panelMat2.emissive.set(c.emissive);
+    panelMat2.emissiveIntensity = pulseVal*1.3;
+    glowMesh.material.opacity   = pulseVal*0.55;
+    scene.fog.density = 0.055 - pulseVal*0.022;
+    if (ledDome) {
+      ledDome.material.emissive.set(c.emissive);
+      ledDome.material.emissiveIntensity = pulseVal*1.5;
+    }
+  } else {
+    boxLight.intensity              *= 0.88;
+    panelMat2.emissiveIntensity     *= 0.88;
+    glowMesh.material.opacity       *= 0.88;
+    if (ledDome) ledDome.material.emissiveIntensity *= 0.88;
+    scene.fog.density = 0.055;
+  }
+
+  if (frame%30===0) updateClock();
+  renderer.render(scene, camera);
+}
+
+// ── resize (handles orientation change on iOS) ────────────────────────────────
+function onResize() {
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+window.addEventListener('resize', onResize);
+// iOS fires 'orientationchange' slightly before resize settles
+window.addEventListener('orientationchange', () => setTimeout(onResize, 200));
+
+// Prevent context menu on long-press (iOS)
+renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
+
+setColor('warm');
+animate();
+</script>
+</body>
+</html>
